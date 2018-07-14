@@ -1,5 +1,5 @@
 # GroceryStoreAnalysis
-Descriptive, RFM and price elasticity analysis done on Ta Feng grocery store data.
+Descriptive, RFM and price elasticity of demand analysis done on Ta Feng grocery store data.
 
 The dataset contains four months of data between the years 2000 and 2001.
 
