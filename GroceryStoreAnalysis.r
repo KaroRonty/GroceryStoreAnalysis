@@ -46,7 +46,7 @@ rfm_heatmap(rfm_scores)
 # Remove excessive 1x1 columns
 rfm_scores_df <- as.data.frame(rfm_scores$rfm)
 
-###################################################
+#-------------------------------------------------------------------
 # Add purchase prices with two decimals
 sales$price <- as.numeric(round(sales$total / sales$quantity, 2))
 
@@ -83,8 +83,6 @@ product_list$elasticity[i] <- lm_temp$coefficients["prices"] *
 elasticities <- product_list %>% 
   filter(p_value < 0.05) %>% 
   select(proudct_id,
-         prices,
-         demands,
          n,
          r_squared,
          p_value,
