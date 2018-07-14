@@ -93,4 +93,4 @@ elasticities <- product_list %>%
 # Plot the elasticities after removing outliers
 elasticities_no_outliers <- elasticities %>% 
   filter(elasticity < 100, elasticity > -100)
-hist(product_list_no_outliers$elasticity, breaks = 100, main = "Distribution of elasticities")
+hist(elasticities_no_outliers$elasticity, breaks = 100, main = "Distribution of elasticities")
