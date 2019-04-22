@@ -4,91 +4,103 @@ library(dplyr)
 library(rfm)
 library(tibble)
 library(broom) # extracting p-values using glance()
+library(purrr) # pluck & map
 options(scipen = 1e9)
 
 # Read & format the data
-sales <- fread("ta_feng.csv", sep = ";")
-sales$date <- as.Date(sales$date)
+sales <- fread("ta_feng.csv", sep = ",")
+sales$TRANSACTION_DT <- as.Date(sales$TRANSACTION_DT, format = "%m/%d/%Y")
+sales$AMOUNT <- as.numeric(sales$AMOUNT)
+sales$SALES_PRICE <- as.numeric(sales$SALES_PRICE)
 
 # Remove outliers for plotting
 sales_no_outliers <- sales %>% 
-  filter(total < quantile(.$total, 0.99),
-         quantity < quantile(.$quantity, 0.999))
+  filter(SALES_PRICE < quantile(.$SALES_PRICE, 0.99),
+         AMOUNT < quantile(.$AMOUNT, 0.999))
+
 # Plot totals and quantities
-hist(sales_no_outliers$total, breaks = 50)
-hist(sales_no_outliers$quantity, breaks = 50)
+hist(sales_no_outliers$SALES_PRICE, breaks = 50)
+hist(sales_no_outliers$AMOUNT, breaks = 50)
 
 # Amount of customers:
-length(unique(sales$customer_id))
+length(unique(sales$CUSTOMER_ID))
 
 # Mean quantity of total items bought by customer
 sales %>% 
-  group_by(customer_id) %>% 
-  summarise(qty = sum(quantity)) %>% 
+  group_by(CUSTOMER_ID) %>% 
+  summarise(qty = sum(AMOUNT)) %>% 
   .$qty %>%
   mean(na.rm = T)
 
 # Make a new data frame containing days since last shopping time,
 # frequency and total amount spent for RFM analysis
 rfm_data <- sales %>% 
-  group_by(customer_id) %>% 
-  summarise(r = as.Date(date[which.max(date)]),
+  group_by(CUSTOMER_ID) %>% 
+  summarise(r = TRANSACTION_DT[which.max(TRANSACTION_DT)],
             f = n(),
-            m = sum(total))
-# A faster way is calculating the date difference outside the pipes
-max_date <- max(sales$date)
-rfm_data$r <- max_date - rfm_data$r
+            m = sum(SALES_PRICE))
 
-  
+# A faster way is calculating the date difference outside the pipes
+max_date <- max(sales$TRANSACTION_DT)
+rfm_data$r <- as.numeric(max_date - rfm_data$r)
+
 # Classify customers by RFM score and plot a heatmap
-rfm_scores <- as.list(rfm_table_customer(rfm_data, customer_id, f, r, m, max_date))
+rfm_scores <- as.list(rfm_table_customer(rfm_data, CUSTOMER_ID, f, r, m, max_date))
 rfm_heatmap(rfm_scores)
 # Remove excessive 1x1 columns
 rfm_scores_df <- as.data.frame(rfm_scores$rfm)
 
 #-------------------------------------------------------------------
 # Add purchase prices with two decimals
-sales$price <- as.numeric(round(sales$total / sales$quantity, 2))
+sales$price <- as.numeric(round(sales$SALES_PRICE / sales$AMOUNT, 2))
 
 # Get the prices and demands for each product that has had multiple prices
 product_list <- sales %>% 
-  group_by(proudct_id) %>% 
+  group_by(PRODUCT_ID) %>% 
   summarise(prices = list(price),
-            demands = list(quantity),
+            demands = list(AMOUNT),
             var = var(price, na.rm = T) / mean(price, na.rm = T),
             n = n()) %>% 
   filter(var > 0) %>% 
   as.tibble()
 
-product_list$r_squared <- NA
-product_list$p_value <- NA
-product_list$elasticity <- NA
+# Do linear models to obtain coefficients
+lms <- product_list %>% 
+  split(.$PRODUCT_ID) %>% 
+  map(~ safely(lm)(pluck(demands, 1) ~ pluck(prices, 1), data = .)$result)
 
-# Calculate elasticities for each product
-for(i in 1:nrow(product_list)){
-temp <- (cbind(as.data.frame(product_list$prices[i]), as.data.frame(product_list$demands[i])))
-names(temp) <- c("prices", "demands")
-temp <- temp %>% 
-  group_by(prices) %>% 
-  summarise(demand = sum(demands))
+# Get the second coefficient from each list
+coefs <- lms %>% 
+  map(coefficients) %>%
+  sapply("[[", 2)
 
-lm_temp <- lm(demand ~ prices, temp)
+# Get p-values for the models
+pvalues <- lms %>% 
+  map(glance) %>% 
+  map("p.value")
 
-product_list$r_squared[i] <- summary(lm_temp)$r.squared
-product_list$p_value[i] <- glance(lm_temp)$p.value
-product_list$elasticity[i] <- lm_temp$coefficients["prices"] *
-                           (mean(temp$prices) / mean(temp$demand))
-}
+# Combine the obtained values
+pvalues <- unlist(pvalues)
+product_list <- as.tibble(cbind(product_list, cbind(coefs, as.data.frame(pvalues))))
 
+# Calculate elasticities
+product_list <- product_list %>% 
+  group_by(PRODUCT_ID) %>% 
+  summarise(elasticity = coefs *
+              (mean(as.numeric(pluck(prices, 1))) /
+                 mean(as.numeric(pluck(demands, 1))))) %>% 
+  inner_join(product_list, ., by = "PRODUCT_ID")
+
+# Filter those with bad p-values (optional)
 elasticities <- product_list %>% 
-  filter(p_value < 0.05) %>% 
-  select(proudct_id,
+  filter(pvalues < 0.05) %>% 
+  select(PRODUCT_ID,
          n,
-         r_squared,
-         p_value,
+         pvalues,
          elasticity)
 
 # Plot the elasticities after removing outliers
 elasticities_no_outliers <- elasticities %>% 
   filter(elasticity < 100, elasticity > -100)
+
 hist(elasticities_no_outliers$elasticity, breaks = 100, main = "Distribution of elasticities")
